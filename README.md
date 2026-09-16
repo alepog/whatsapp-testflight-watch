@@ -146,6 +146,32 @@ in un browser: risponde con lo stato in JSON. Deve uscire una cosa cosi':
 Se vedi `"state":"CLOSED"` funziona. Se vedi un errore su `STATE`, il binding
 KV del punto 3 non e' stato salvato.
 
+### Importante: la quota di ntfy.sh e' per indirizzo IP
+
+ntfy.sh gratuito conta la quota giornaliera di messaggi **per IP di chi
+pubblica**, non per topic. I Worker Cloudflare escono da IP condivisi con
+migliaia di altri utenti, e quella quota di solito e' gia' esaurita: il Worker
+riceve `429 {"code":42908}` e la notifica non parte. Verificato dal vivo.
+
+Lo stesso rischio, piu' raro, vale per i runner di GitHub Actions.
+
+Due modi per togliersi il problema, gia' supportati dal codice:
+
+**Token ntfy (veloce).** Crea un account gratuito su ntfy.sh, genera un access
+token, e aggiungilo come secret `NTFY_TOKEN` — sul Worker e, volendo, anche nei
+Secrets del repo GitHub. Con il token la quota e' del tuo account invece che
+dell'IP condiviso.
+
+**Telegram (piu' solido).** Crea un bot con @BotFather, prendi il token, scrivi
+un messaggio al bot e leggi il tuo `chat_id` da
+`https://api.telegram.org/bot<TOKEN>/getUpdates`. Aggiungi `TELEGRAM_BOT_TOKEN`
+e `TELEGRAM_CHAT_ID` come secret. Oltre a risolvere la quota, ti da' un secondo
+canale indipendente: se ntfy ha un disservizio, Telegram passa lo stesso.
+
+Il codice prova tutti i canali configurati in parallelo e considera la notifica
+consegnata se **almeno uno** arriva. Se non ne arriva nessuno, lo stato non
+viene salvato e al giro dopo riprova.
+
 ### Come capisci quale dei due e' morto
 
 I due watcher mandano heartbeat con titoli diversi, una volta a settimana:

@@ -107,17 +107,23 @@ def notify(title, message, url, priority="default", tags="eyes"):
         # itms-beta:// e' la scorciatoia esplicita, come secondo tentativo.
         deep = url.replace("https://", "itms-beta://", 1)
         try:
+            headers = {
+                "Title": title.encode("utf-8"),
+                "Priority": priority,
+                "Tags": tags,
+                "Click": url,
+                "Actions": f"view, Apri TestFlight, {deep}, clear=true; "
+                           f"view, Apri nel browser, {url}",
+            }
+            # Senza token ntfy.sh conta la quota giornaliera per IP, e i runner
+            # GitHub escono da IP condivisi: un giorno di traffico altrui puo'
+            # bruciare la quota proprio quando serve. Col token e' quota tua.
+            if token_ntfy := os.environ.get("NTFY_TOKEN", "").strip():
+                headers["Authorization"] = f"Bearer {token_ntfy}"
             req = urllib.request.Request(
                 f"{server}/{topic}",
                 data=message.encode("utf-8"),
-                headers={
-                    "Title": title.encode("utf-8"),
-                    "Priority": priority,
-                    "Tags": tags,
-                    "Click": url,
-                    "Actions": f"view, Apri TestFlight, {deep}, clear=true; "
-                               f"view, Apri nel browser, {url}",
-                },
+                headers=headers,
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=20):
