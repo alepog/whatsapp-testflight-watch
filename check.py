@@ -29,10 +29,10 @@ CLOSED_MARKERS = (
     "this beta build has expired",
 )
 
-STATE_FILE = os.environ.get("STATE_FILE", "state.json")
+STATE_FILE = os.environ.get("STATE_FILE") or "state.json"
 
 # Consecutive failed checks before we warn that the watcher itself is broken.
-ERROR_STREAK_ALERT = int(os.environ.get("ERROR_STREAK_ALERT", "6"))
+ERROR_STREAK_ALERT = int(os.environ.get("ERROR_STREAK_ALERT") or 6)
 
 
 def fetch(code, attempts=3):
@@ -95,33 +95,36 @@ def classify(status, body):
 
 
 def notify(title, message, url, priority="default", tags="eyes"):
+    """Return True se almeno un canale ha ricevuto, o se non ne e' configurato."""
     sent = []
+    failed = []
 
     topic = os.environ.get("NTFY_TOPIC", "").strip()
     if topic:
-        server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+        server = (os.environ.get("NTFY_SERVER") or "https://ntfy.sh").rstrip("/")
         # Su iOS testflight.apple.com e' un universal link: l'https apre
         # direttamente l'app TestFlight, e al massimo ripiega su Safari.
         # itms-beta:// e' la scorciatoia esplicita, come secondo tentativo.
         deep = url.replace("https://", "itms-beta://", 1)
-        req = urllib.request.Request(
-            f"{server}/{topic}",
-            data=message.encode("utf-8"),
-            headers={
-                "Title": title.encode("utf-8"),
-                "Priority": priority,
-                "Tags": tags,
-                "Click": url,
-                "Actions": f"view, Apri TestFlight, {deep}, clear=true; "
-                           f"view, Apri nel browser, {url}",
-            },
-            method="POST",
-        )
         try:
+            req = urllib.request.Request(
+                f"{server}/{topic}",
+                data=message.encode("utf-8"),
+                headers={
+                    "Title": title.encode("utf-8"),
+                    "Priority": priority,
+                    "Tags": tags,
+                    "Click": url,
+                    "Actions": f"view, Apri TestFlight, {deep}, clear=true; "
+                               f"view, Apri nel browser, {url}",
+                },
+                method="POST",
+            )
             with urllib.request.urlopen(req, timeout=20):
                 sent.append("ntfy")
         except Exception as e:  # noqa: BLE001
             print(f"  ! ntfy fallita: {e}", file=sys.stderr)
+            failed.append("ntfy")
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
@@ -141,8 +144,15 @@ def notify(title, message, url, priority="default", tags="eyes"):
                 sent.append("telegram")
         except Exception as e:  # noqa: BLE001
             print(f"  ! telegram fallita: {e}", file=sys.stderr)
+            failed.append("telegram")
 
-    print(f"  -> notifica inviata via: {', '.join(sent) if sent else 'NESSUN CANALE CONFIGURATO'}")
+    if sent:
+        print(f"  -> notifica inviata via: {', '.join(sent)}")
+    elif failed:
+        print(f"  -> NOTIFICA FALLITA su: {', '.join(failed)}")
+    else:
+        print("  -> nessun canale di notifica configurato")
+    return bool(sent) or not failed
 
 
 def load_state():
@@ -196,8 +206,9 @@ def main():
         if state == prev:
             continue
 
+        delivered = True
         if state == "OPEN":
-            notify(
+            delivered = notify(
                 "SLOT TESTFLIGHT APERTO",
                 f"Il beta {code} sta accettando tester. Vai SUBITO.\n{detail}",
                 url,
@@ -205,9 +216,11 @@ def main():
                 tags="rotating_light",
             )
         elif prev == "OPEN":
-            notify("Slot richiuso", f"Il beta {code} non accetta piu' tester.\n{detail}", url, "low", "lock")
+            delivered = notify(
+                "Slot richiuso", f"Il beta {code} non accetta piu' tester.\n{detail}",
+                url, "low", "lock")
         elif state == "UNKNOWN":
-            notify(
+            delivered = notify(
                 "Stato TestFlight non riconosciuto",
                 f"La pagina di {code} non corrisponde a nessuno stato noto - "
                 f"controlla a mano, potrebbe essere aperto.\n{detail}",
@@ -216,9 +229,20 @@ def main():
                 "warning",
             )
         elif state == "GONE" and prev:
-            notify("Codice invito sparito", f"{code} ora risponde 404.", url, "default", "ghost")
+            delivered = notify(
+                "Codice invito sparito", f"{code} ora risponde 404.", url, "default", "ghost")
         elif state == "ERROR" and prev not in (None, "ERROR"):
             print("  (errore transitorio, nessuna notifica)")
+
+        # Se non siamo riusciti ad avvisare, NON registrare il nuovo stato:
+        # al prossimo giro il cambiamento va rilevato di nuovo e riprovato.
+        # Registrarlo qui significherebbe restare in silenzio per sempre.
+        if not delivered:
+            print(f"  ! notifica non consegnata: {code} resta a '{prev}', si riprova")
+            if code in old:
+                new[code] = dict(old[code])
+            else:
+                del new[code]
 
     if dry_run:
         print("\n--dry-run: stato NON salvato.")
