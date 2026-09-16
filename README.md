@@ -90,7 +90,20 @@ falliti di fila ricevi una notifica "Watcher in errore" invece di restare
 all'oscuro. Con `HEARTBEAT_DAYS=7` ricevi anche un "watcher vivo" settimanale:
 se smette di arrivare, qualcosa si e' rotto.
 
-## Cloudflare: il secondo watcher (opzionale ma consigliato)
+## Cloudflare: il secondo watcher
+
+> **Stato: il Worker funziona, il suo cron no.**
+> Verificato il 16/09/2026 su questo account: il Worker rileva correttamente e
+> consegna le notifiche su Telegram, ma i Cron Triggers non vengono mai
+> eseguiti. Su un'ora di osservazione: zero invocazioni schedulate nei log e
+> contatore delle invocazioni fermo (41 -> 41 su 4 minuti con cron al minuto,
+> 42 -> 42 attraverso un tick con `*/5`). Provati sia l'aiuto grafico
+> "Every minute" sia l'espressione `*/5 * * * *`, eliminando e ricreando il
+> trigger: nessuna differenza. Causa non identificata.
+>
+> Finche' non si risolve, il Worker si muove **solo** se qualcuno apre il suo
+> URL, quindi non aggiunge nulla al watcher GitHub, che invece gira da solo.
+> Resta li' inerte e non costa niente.
 
 Far girare **anche** il Worker, in parallelo a GitHub Actions e sullo stesso
 topic ntfy, da':
