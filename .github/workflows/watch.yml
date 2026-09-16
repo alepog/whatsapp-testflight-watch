@@ -1,0 +1,46 @@
+name: Watch TestFlight
+
+on:
+  schedule:
+    # Ogni 5 minuti e' il minimo consentito da GitHub. In pratica i cron
+    # schedulati partono spesso con 10-20 minuti di ritardo: e' normale.
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: testflight-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Controlla gli slot
+        id: check
+        env:
+          TF_CODES: ${{ vars.TF_CODES }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HEARTBEAT_DAYS: ${{ vars.HEARTBEAT_DAYS || '7' }}
+        run: python3 check.py
+
+      - name: Salva lo stato
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git config user.name  "testflight-watch"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json
+          git commit -m "stato: ${{ steps.check.outputs.summary }}"
+          for i in 1 2 3; do
+            git pull --rebase --autostash && git push && exit 0
+            sleep 5
+          done
+          exit 1
