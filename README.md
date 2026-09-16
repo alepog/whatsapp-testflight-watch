@@ -162,11 +162,20 @@ token, e aggiungilo come secret `NTFY_TOKEN` — sul Worker e, volendo, anche ne
 Secrets del repo GitHub. Con il token la quota e' del tuo account invece che
 dell'IP condiviso.
 
-**Telegram (piu' solido).** Crea un bot con @BotFather, prendi il token, scrivi
-un messaggio al bot e leggi il tuo `chat_id` da
-`https://api.telegram.org/bot<TOKEN>/getUpdates`. Aggiungi `TELEGRAM_BOT_TOKEN`
-e `TELEGRAM_CHAT_ID` come secret. Oltre a risolvere la quota, ti da' un secondo
-canale indipendente: se ntfy ha un disservizio, Telegram passa lo stesso.
+**Telegram (piu' solido).** Oltre a risolvere la quota ti da' un canale
+indipendente da ntfy: se uno dei due ha un disservizio, l'altro passa lo stesso.
+
+1. Crea un bot con **@BotFather** (`/newbot`) e copia il token.
+2. Aggiungilo come **secret** `TELEGRAM_BOT_TOKEN`.
+3. Scrivi a **@userinfobot**: ti risponde col tuo ID numerico. Mettilo in
+   `TELEGRAM_CHAT_ID` (variabile normale, non e' un segreto).
+4. **Apri il tuo bot e mandagli `/start`.**
+
+Il punto 4 non e' opzionale e non e' un dettaglio: Telegram vieta a un bot di
+scrivere per primo a chi non gli ha mai parlato. Finche' non lo fai, l'API
+risponde `400 {"description":"Bad Request: chat not found"}` e la notifica non
+parte, anche se token e chat_id sono perfetti. E' l'errore piu' comune di
+questa configurazione.
 
 Il codice prova tutti i canali configurati in parallelo e considera la notifica
 consegnata se **almeno uno** arriva. Se non ne arriva nessuno, lo stato non
