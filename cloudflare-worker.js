@@ -11,6 +11,8 @@
  *   - un binding KV chiamato  STATE   (per ricordare lo stato tra un giro e l'altro)
  *   - una variabile           TF_CODES = "krUFQpyJ,YcmGWyxV"
  *   - un secret               NTFY_TOPIC
+ *   - opzionale               NTFY_TOKEN  (token di un account ntfy.sh)
+ *   - opzionale               TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
  *   - un cron trigger         * * * * *
  */
 
@@ -56,26 +58,78 @@ export function classify(status, body) {
   return ["UNKNOWN", detail];
 }
 
-async function notify(env, title, message, url, priority, tags) {
-  if (!env.NTFY_TOPIC) return;
+async function notifyNtfy(env, title, message, url, priority, tags) {
+  if (!env.NTFY_TOPIC) return null;
   const deep = url.replace("https://", "itms-beta://");
+  const headers = {
+    Title: title,
+    Priority: priority,
+    Tags: tags,
+    Click: url,
+    Actions:
+      `view, Apri TestFlight, ${deep}, clear=true; ` +
+      `view, Apri nel browser, ${url}`,
+  };
+  // Senza token ntfy.sh conta la quota giornaliera per IP, e i Worker escono
+  // da IP condivisi con la quota gia' esaurita da altri: da qui i 429. Con il
+  // token di un account ntfy la quota diventa tua e il problema sparisce.
+  if (env.NTFY_TOKEN) headers.Authorization = `Bearer ${env.NTFY_TOKEN}`;
   try {
-    await fetch(`${env.NTFY_SERVER || "https://ntfy.sh"}/${env.NTFY_TOPIC}`, {
+    const r = await fetch(`${env.NTFY_SERVER || "https://ntfy.sh"}/${env.NTFY_TOPIC}`, {
       method: "POST",
       body: message,
-      headers: {
-        Title: title,
-        Priority: priority,
-        Tags: tags,
-        Click: url,
-        Actions:
-          `view, Apri TestFlight, ${deep}, clear=true; ` +
-          `view, Apri nel browser, ${url}`,
-      },
+      headers,
     });
+    if (!r.ok) {
+      console.log("ntfy ha risposto", r.status, (await r.text()).slice(0, 200));
+      return `ntfy-http-${r.status}`;
+    }
+    return "ntfy";
   } catch (e) {
-    console.log("notifica fallita:", String(e));
+    console.log("ntfy fallita:", String(e));
+    return "ntfy-errore";
   }
+}
+
+async function notifyTelegram(env, title, message, url) {
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return null;
+  try {
+    const r = await fetch(
+      `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chat_id: env.TELEGRAM_CHAT_ID,
+          text: `${title}\n${message}\n${url}`,
+          disable_web_page_preview: true,
+        }),
+      }
+    );
+    if (!r.ok) {
+      console.log("telegram ha risposto", r.status, (await r.text()).slice(0, 200));
+      return `telegram-http-${r.status}`;
+    }
+    return "telegram";
+  } catch (e) {
+    console.log("telegram fallita:", String(e));
+    return "telegram-errore";
+  }
+}
+
+// Prova ogni canale configurato. Basta che UNO arrivi perche' la notifica sia
+// consegnata; se falliscono tutti lo stato non viene salvato e si riprova.
+async function notify(env, title, message, url, priority, tags) {
+  const esiti = (
+    await Promise.all([
+      notifyNtfy(env, title, message, url, priority, tags),
+      notifyTelegram(env, title, message, url),
+    ])
+  ).filter((e) => e !== null);
+
+  if (esiti.length === 0) return "non-configurato";
+  const ok = esiti.filter((e) => e === "ntfy" || e === "telegram");
+  return ok.length ? `inviata (${ok.join("+")})` : esiti.join(", ");
 }
 
 async function checkAll(env) {
@@ -106,8 +160,7 @@ async function checkAll(env) {
     const saved = JSON.parse((await env.STATE.get(code)) || "{}");
     const prev = saved.state || null;
     const streak = state === "ERROR" ? (saved.error_streak || 0) + 1 : 0;
-
-    results.push({ code, prev, state, detail });
+    let delivery = null;
 
     // Se Apple inizia a rifiutare gli IP di Cloudflare, dillo.
     if (streak === ERROR_STREAK_ALERT) {
@@ -118,23 +171,32 @@ async function checkAll(env) {
 
     if (state !== prev) {
       if (state === "OPEN") {
-        await notify(env, "SLOT TESTFLIGHT APERTO",
+        delivery = await notify(env, "SLOT TESTFLIGHT APERTO",
           `Il beta ${code} accetta tester. Vai SUBITO.\n${detail}`,
           url, "urgent", "rotating_light");
       } else if (prev === "OPEN") {
-        await notify(env, "Slot richiuso",
+        delivery = await notify(env, "Slot richiuso",
           `${code} non accetta piu' tester.`, url, "low", "lock");
       } else if (state === "UNKNOWN") {
-        await notify(env, "Stato TestFlight non riconosciuto",
+        delivery = await notify(env, "Stato TestFlight non riconosciuto",
           `${code}: pagina non riconosciuta, controlla a mano.\n${detail}`,
           url, "high", "warning");
       } else if (state === "GONE" && prev) {
-        await notify(env, "Codice invito sparito",
+        delivery = await notify(env, "Codice invito sparito",
           `${code} ora risponde 404.`, url, "default", "ghost");
       }
     }
 
-    if (state !== prev || streak !== (saved.error_streak || 0)) {
+    // Se dovevamo avvisare e non ci siamo riusciti, NON registrare il nuovo
+    // stato: al giro dopo il cambiamento va rilevato di nuovo e riprovato.
+    // Registrarlo qui significherebbe tacere per sempre.
+    const stuck =
+      delivery !== null &&
+      !delivery.startsWith("inviata") &&
+      delivery !== "non-configurato";
+    results.push({ code, prev, state, detail, notifica: delivery, riprovera: stuck });
+
+    if (!stuck && (state !== prev || streak !== (saved.error_streak || 0))) {
       await env.STATE.put(code, JSON.stringify({ state, error_streak: streak, at: now }));
     }
   }
