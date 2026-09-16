@@ -70,6 +70,9 @@ async function notify(env, title, message, url, priority, tags) {
       Priority: priority,
       Tags: tags,
       Click: url,
+      Actions:
+        `view, Apri TestFlight, ${url.replace("https://", "itms-beta://")}, clear=true; ` +
+        `view, Apri nel browser, ${url}`,
     },
   });
 }

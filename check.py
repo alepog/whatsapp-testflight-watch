@@ -100,6 +100,10 @@ def notify(title, message, url, priority="default", tags="eyes"):
     topic = os.environ.get("NTFY_TOPIC", "").strip()
     if topic:
         server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+        # Su iOS testflight.apple.com e' un universal link: l'https apre
+        # direttamente l'app TestFlight, e al massimo ripiega su Safari.
+        # itms-beta:// e' la scorciatoia esplicita, come secondo tentativo.
+        deep = url.replace("https://", "itms-beta://", 1)
         req = urllib.request.Request(
             f"{server}/{topic}",
             data=message.encode("utf-8"),
@@ -108,7 +112,8 @@ def notify(title, message, url, priority="default", tags="eyes"):
                 "Priority": priority,
                 "Tags": tags,
                 "Click": url,
-                "Actions": f"view, Apri TestFlight, {url}",
+                "Actions": f"view, Apri TestFlight, {deep}, clear=true; "
+                           f"view, Apri nel browser, {url}",
             },
             method="POST",
         )
