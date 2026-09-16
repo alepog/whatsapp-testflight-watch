@@ -90,6 +90,69 @@ falliti di fila ricevi una notifica "Watcher in errore" invece di restare
 all'oscuro. Con `HEARTBEAT_DAYS=7` ricevi anche un "watcher vivo" settimanale:
 se smette di arrivare, qualcosa si e' rotto.
 
+## Cloudflare: il secondo watcher (opzionale ma consigliato)
+
+Far girare **anche** il Worker, in parallelo a GitHub Actions e sullo stesso
+topic ntfy, da':
+
+- controllo ogni **minuto** invece di 5-25, perche' il cron di Cloudflare e' puntuale
+- due cloud indipendenti: se GitHub si ferma, Cloudflare continua, e viceversa
+- nessun limite di 60 giorni di inattivita'
+- costo zero (~1.440 richieste al giorno sulle 100.000 gratuite)
+
+Quando il beta apre ricevi due notifiche invece di una. Per questo caso e' un
+vantaggio: una doppia costa due secondi di fastidio, una mancata costa un anno.
+
+Si fa tutto dal browser, **senza installare Node ne' wrangler**.
+
+### 1. Crea lo spazio dove ricorda lo stato
+
+Dashboard Cloudflare → **Storage & Databases → KV** → *Create a namespace*.
+Chiamalo `testflight-state`.
+
+### 2. Crea il Worker
+
+**Compute (Workers) → Create → Worker**. Dagli un nome, per esempio
+`testflight-watch`, e premi *Deploy* accettando il codice di esempio.
+Poi **Edit code**: cancella tutto, incolla il contenuto di
+`cloudflare-worker.js` e premi *Deploy* di nuovo.
+
+### 3. Collega le impostazioni
+
+Nel Worker, **Settings → Bindings → Add**:
+
+| Tipo | Nome | Valore |
+|---|---|---|
+| KV namespace | `STATE` | il namespace `testflight-state` |
+| Variable | `TF_CODES` | `krUFQpyJ,YcmGWyxV` |
+| Secret | `NTFY_TOPIC` | il tuo topic ntfy |
+
+> `NTFY_TOPIC` va aggiunto come **Secret**, non come Variable: le Variable si
+> leggono in chiaro dalla dashboard, i Secret no.
+
+### 4. Accendi il cron
+
+**Settings → Triggers → Cron Triggers → Add**, espressione:
+
+    * * * * *
+
+### 5. Prova subito
+
+Apri l'URL del worker (`https://testflight-watch.<tuo-sottodominio>.workers.dev`)
+in un browser: risponde con lo stato in JSON. Deve uscire una cosa cosi':
+
+    [{"code":"krUFQpyJ","prev":null,"state":"CLOSED","detail":"This beta isn't accepting..."}]
+
+Se vedi `"state":"CLOSED"` funziona. Se vedi un errore su `STATE`, il binding
+KV del punto 3 non e' stato salvato.
+
+### Come capisci quale dei due e' morto
+
+I due watcher mandano heartbeat con titoli diversi, una volta a settimana:
+"Watcher vivo" da GitHub, "Watcher Cloudflare vivo" da Cloudflare. Due battiti =
+tutto a posto. Uno solo = quell'altro e' morto, e sai dove guardare. Nessuno dei
+due = sono morti entrambi.
+
 ## Aggiungere nuovi codici invito
 
 WhatsApp cambia link nel tempo. Il link corrente lo pubblica WABetaInfo su

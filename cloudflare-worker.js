@@ -1,26 +1,17 @@
 /**
- * Variante Cloudflare Workers: stessa logica di check.py, ma il cron di
- * Cloudflare parte davvero al minuto, senza le code di GitHub Actions.
+ * Watcher slot TestFlight - versione Cloudflare Workers.
  *
- * Deploy:
- *   npm create cloudflare@latest wa-testflight -- --type=hello-world
- *   # sostituisci src/index.js con questo file, poi:
- *   npx wrangler kv namespace create STATE
- *   # incolla l'id in wrangler.toml, aggiungi il cron, poi:
- *   npx wrangler secret put NTFY_TOPIC
- *   npx wrangler deploy
+ * Stessa logica di check.py, ma il cron di Cloudflare parte davvero ogni
+ * minuto invece di finire nelle code di GitHub Actions.
  *
- * wrangler.toml:
- *   [triggers]
- *   crons = ["* * * * *"]
- *   [vars]
- *   TF_CODES = "krUFQpyJ,YcmGWyxV"
- *   [[kv_namespaces]]
- *   binding = "STATE"
- *   id = "<id-restituito-dal-comando-sopra>"
+ * Si installa TUTTO dal browser, senza Node e senza wrangler: le istruzioni
+ * passo passo sono in README.md, sezione "Cloudflare".
  *
- * Piano gratuito: 100.000 richieste al giorno, un controllo al minuto ne usa
- * ~1.440. Ci sta comodamente.
+ * Gli serve:
+ *   - un binding KV chiamato  STATE   (per ricordare lo stato tra un giro e l'altro)
+ *   - una variabile           TF_CODES = "krUFQpyJ,YcmGWyxV"
+ *   - un secret               NTFY_TOPIC
+ *   - un cron trigger         * * * * *
  */
 
 const UA =
@@ -33,6 +24,9 @@ const CLOSED_MARKERS = [
   "this beta has expired",
   "this beta isn't available",
 ];
+
+const ERROR_STREAK_ALERT = 10; // giri falliti di fila prima di gridare
+const HEARTBEAT_DAYS = 7;
 
 function stripTags(s) {
   return s
@@ -55,31 +49,43 @@ export function classify(status, body) {
   const detail = betaStatus || title || "(nessun testo di stato)";
   const hay = `${title} ${betaStatus}`.toLowerCase();
 
+  // Segnale positivo: Apple intitola "Join the <App> beta" quando e' aperto.
   if (/\bjoin the .+ beta\b/i.test(title)) return ["OPEN", detail];
   if (CLOSED_MARKERS.some((m) => hay.includes(m))) return ["CLOSED", detail];
+  // Non corrisponde a niente di noto: avvisa comunque, mai restare in silenzio.
   return ["UNKNOWN", detail];
 }
 
 async function notify(env, title, message, url, priority, tags) {
   if (!env.NTFY_TOPIC) return;
-  await fetch(`${env.NTFY_SERVER || "https://ntfy.sh"}/${env.NTFY_TOPIC}`, {
-    method: "POST",
-    body: message,
-    headers: {
-      Title: title,
-      Priority: priority,
-      Tags: tags,
-      Click: url,
-      Actions:
-        `view, Apri TestFlight, ${url.replace("https://", "itms-beta://")}, clear=true; ` +
-        `view, Apri nel browser, ${url}`,
-    },
-  });
+  const deep = url.replace("https://", "itms-beta://");
+  try {
+    await fetch(`${env.NTFY_SERVER || "https://ntfy.sh"}/${env.NTFY_TOPIC}`, {
+      method: "POST",
+      body: message,
+      headers: {
+        Title: title,
+        Priority: priority,
+        Tags: tags,
+        Click: url,
+        Actions:
+          `view, Apri TestFlight, ${deep}, clear=true; ` +
+          `view, Apri nel browser, ${url}`,
+      },
+    });
+  } catch (e) {
+    console.log("notifica fallita:", String(e));
+  }
 }
 
 async function checkAll(env) {
-  const codes = (env.TF_CODES || "").split(",").map((c) => c.trim()).filter(Boolean);
+  const codes = (env.TF_CODES || "krUFQpyJ,YcmGWyxV")
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean);
+
   const results = [];
+  const now = Date.now();
 
   for (const code of codes) {
     const url = `https://testflight.apple.com/join/${code}`;
@@ -97,11 +103,20 @@ async function checkAll(env) {
     }
 
     const [state, detail] = classify(status, body);
-    const prev = await env.STATE.get(code);
+    const saved = JSON.parse((await env.STATE.get(code)) || "{}");
+    const prev = saved.state || null;
+    const streak = state === "ERROR" ? (saved.error_streak || 0) + 1 : 0;
+
     results.push({ code, prev, state, detail });
 
+    // Se Apple inizia a rifiutare gli IP di Cloudflare, dillo.
+    if (streak === ERROR_STREAK_ALERT) {
+      await notify(env, "Watcher Cloudflare in errore",
+        `${code}: ${ERROR_STREAK_ALERT} controlli falliti di fila.\n${detail}`,
+        url, "high", "warning");
+    }
+
     if (state !== prev) {
-      await env.STATE.put(code, state);
       if (state === "OPEN") {
         await notify(env, "SLOT TESTFLIGHT APERTO",
           `Il beta ${code} accetta tester. Vai SUBITO.\n${detail}`,
@@ -113,9 +128,29 @@ async function checkAll(env) {
         await notify(env, "Stato TestFlight non riconosciuto",
           `${code}: pagina non riconosciuta, controlla a mano.\n${detail}`,
           url, "high", "warning");
+      } else if (state === "GONE" && prev) {
+        await notify(env, "Codice invito sparito",
+          `${code} ora risponde 404.`, url, "default", "ghost");
       }
     }
+
+    if (state !== prev || streak !== (saved.error_streak || 0)) {
+      await env.STATE.put(code, JSON.stringify({ state, error_streak: streak, at: now }));
+    }
   }
+
+  // Battito settimanale con titolo distinto da quello di GitHub: cosi' capisci
+  // QUALE dei due watcher e' morto, non solo che ne e' morto uno.
+  const lastHb = Number((await env.STATE.get("_heartbeat")) || 0);
+  if (now - lastHb >= HEARTBEAT_DAYS * 86400000) {
+    if (lastHb) {
+      await notify(env, "Watcher Cloudflare vivo",
+        results.map((r) => `${r.code}=${r.state}`).join(", "),
+        "https://testflight.apple.com/", "min", "heartbeat");
+    }
+    await env.STATE.put("_heartbeat", String(now));
+  }
+
   return results;
 }
 
@@ -123,7 +158,7 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(checkAll(env));
   },
-  // Apri l'URL del worker nel browser per vedere lo stato e testare il deploy.
+  // Apri l'URL del worker nel browser per vedere lo stato e provare il deploy.
   async fetch(request, env) {
     const results = await checkAll(env);
     return new Response(JSON.stringify(results, null, 2), {
