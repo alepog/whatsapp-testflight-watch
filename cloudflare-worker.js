@@ -92,13 +92,21 @@ async function notifyNtfy(env, title, message, url, priority, tags) {
   }
 }
 
+// Quale dei due watcher ha scritto. I messaggi arrivano sullo stesso bot, e
+// senza etichetta non distingueresti un GitHub morto da un Cloudflare morto.
+const FONTE = "CldF";
+
 // Le stesse tag che ntfy usa per le sue icone, riusate come emoji su Telegram.
+//
+// La spunta e la croce rispondono a una domanda sola, a colpo d'occhio: il
+// watcher sta facendo il suo lavoro? Il resto e' l'evento, non lo stato di
+// salute, e ha un'icona sua.
 const TG_EMOJI = {
-  rotating_light: "\u{1F6A8}",
-  warning: "\u26A0\uFE0F",
-  lock: "\u{1F512}",
-  ghost: "\u{1F47B}",
-  heartbeat: "\u{1F493}",
+  heartbeat: "\u2705",       // vivo e vegeto
+  warning: "\u274C",         // non sta funzionando: guardaci
+  ghost: "\u274C",           // codice invito morto: serve sostituirlo
+  rotating_light: "\u{1F6A8}", // lo slot e' aperto
+  lock: "\u{1F512}",           // lo slot si e' richiuso
   eyes: "\u{1F440}",
 };
 
@@ -112,7 +120,7 @@ function telegramBody(title, message, url, tags) {
   const nl = message.indexOf("\n");
   const testa = nl === -1 ? message : message.slice(0, nl);
   const coda = nl === -1 ? "" : message.slice(nl + 1).trim();
-  const righe = [`${emoji} <b>${esc(title)}</b>`, "", esc(testa)];
+  const righe = [`${emoji} <b>${esc(FONTE)} · ${esc(title)}</b>`, "", esc(testa)];
   // La coda e' il testo grezzo di Apple: in corsivo si legge come citazione.
   if (coda) righe.push(`<i>${esc(coda)}</i>`);
   righe.push("", `<a href="${esc(url)}">Apri in TestFlight</a>`);

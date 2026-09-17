@@ -226,10 +226,29 @@ viene salvato e al giro dopo riprova.
 
 ### Come capisci quale dei due e' morto
 
-I due watcher mandano il battito con titoli diversi, ogni mattina alle 9:
-"Watcher vivo" da GitHub, "Watcher Cloudflare vivo" da Cloudflare. Due messaggi
-= tutto a posto. Uno solo = quell'altro e' morto, e sai gia' dove guardare.
-Nessuno dei due = sono morti entrambi, o e' Telegram ad avere problemi.
+Arrivano sullo stesso bot Telegram, quindi ogni messaggio si apre con
+l'etichetta di chi l'ha scritto: **Git** dal watcher GitHub, **CldF** dal
+Worker Cloudflare. Ogni mattina alle 9 ne arrivano due:
+
+    ✅ Git · Watcher vivo
+    ✅ CldF · Watcher Cloudflare vivo
+
+Due messaggi = tutto a posto. Uno solo = quell'altro e' morto, e l'etichetta ti
+dice gia' dove guardare. Nessuno dei due = sono morti entrambi, oppure e'
+Telegram ad avere problemi.
+
+L'emoji risponde a una domanda sola, prima ancora di leggere: il watcher sta
+facendo il suo lavoro?
+
+| | |
+|---|---|
+| ✅ | tutto regolare, e' il battito quotidiano |
+| ❌ | non sta funzionando: controlli falliti di fila, o codice invito sparito |
+| 🚨 | lo slot e' aperto, vai |
+| 🔒 | lo slot si e' richiuso |
+
+Le prime due riguardano la salute del watcher, le altre due l'evento che stavi
+aspettando: sono cose diverse e per questo hanno icone diverse.
 
 ## Aggiungere nuovi codici invito
 

@@ -96,14 +96,22 @@ def classify(status, body):
     return "UNKNOWN", detail
 
 
+# Quale dei due watcher ha scritto. I messaggi arrivano sullo stesso bot, e
+# senza etichetta non distingueresti un GitHub morto da un Cloudflare morto.
+FONTE = os.environ.get("WATCHER_LABEL", "").strip() or "Git"
+
 # Le stesse tag che ntfy usa per le sue icone, riusate come emoji su Telegram:
 # un solo posto da toccare quando si aggiunge un tipo di avviso.
+#
+# La spunta e la croce rispondono a una domanda sola, a colpo d'occhio:
+# il watcher sta facendo il suo lavoro? Il resto e' l'evento, non lo stato
+# di salute, e ha un'icona sua.
 TG_EMOJI = {
-    "rotating_light": "\U0001f6a8",
-    "warning": "\u26a0\ufe0f",
-    "lock": "\U0001f512",
-    "ghost": "\U0001f47b",
-    "heartbeat": "\U0001f493",
+    "heartbeat": "\u2705",        # vivo e vegeto
+    "warning": "\u274c",          # non sta funzionando: guardaci
+    "ghost": "\u274c",            # codice invito morto: serve sostituirlo
+    "rotating_light": "\U0001f6a8",  # lo slot e' aperto
+    "lock": "\U0001f512",            # lo slot si e' richiuso
     "eyes": "\U0001f440",
 }
 
@@ -118,7 +126,7 @@ def telegram_body(title, message, url, tags):
     """
     emoji = TG_EMOJI.get(tags, TG_EMOJI["eyes"])
     testa, _, coda = message.partition("\n")
-    righe = [f"{emoji} <b>{html.escape(title)}</b>", "", html.escape(testa)]
+    righe = [f"{emoji} <b>{html.escape(FONTE)} · {html.escape(title)}</b>", "", html.escape(testa)]
     # La seconda riga e' sempre il testo grezzo di Apple: in corsivo si legge
     # come citazione e non si confonde con la frase scritta da noi.
     if coda.strip():
