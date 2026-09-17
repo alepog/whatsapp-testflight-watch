@@ -92,18 +92,32 @@ se smette di arrivare, qualcosa si e' rotto.
 
 ## Cloudflare: il secondo watcher
 
-> **Stato: il Worker funziona, il suo cron no.**
-> Verificato il 16/09/2026 su questo account: il Worker rileva correttamente e
-> consegna le notifiche su Telegram, ma i Cron Triggers non vengono mai
-> eseguiti. Su un'ora di osservazione: zero invocazioni schedulate nei log e
-> contatore delle invocazioni fermo (41 -> 41 su 4 minuti con cron al minuto,
-> 42 -> 42 attraverso un tick con `*/5`). Provati sia l'aiuto grafico
+> **Stato: il Worker funziona. Sul cron, da rimisurare.**
+> Il 16/09/2026 il cron risultava mai eseguito: zero invocazioni schedulate nei
+> log e contatore delle invocazioni fermo (41 -> 41 su 4 minuti con cron al
+> minuto, 42 -> 42 attraverso un tick con `*/5`). Provati sia l'aiuto grafico
 > "Every minute" sia l'espressione `*/5 * * * *`, eliminando e ricreando il
-> trigger: nessuna differenza. Causa non identificata.
+> trigger: nessuna differenza.
 >
-> Finche' non si risolve, il Worker si muove **solo** se qualcuno apre il suo
-> URL, quindi non aggiunge nulla al watcher GitHub, che invece gira da solo.
-> Resta li' inerte e non costa niente.
+> **Quelle due misure pero' non dimostrano niente**, ed e' l'errore da non
+> ripetere:
+>
+> - il contatore delle invocazioni della dashboard conta le **richieste HTTP**,
+>   non i tick schedulati: resta fermo anche con il cron perfettamente attivo;
+> - i log persistenti dei Worker sono **disattivati di default**. "Zero righe
+>   nei log" e' lo stato normale di un worker senza observability accesa, non la
+>   prova di un'assenza di esecuzioni.
+>
+> Servivano due strumenti diversi da quelli usati. Per questo il worker ora
+> timbra `_last_cron` su KV a ogni tick schedulato, prima di fare altro: e'
+> l'unica misura che distingue "non parte" da "parte e non lascia tracce".
+> Dopo il deploy, aspetta tre minuti e apri l'URL del worker: il campo
+> `ultimo_cron` risponde in modo definitivo.
+>
+> Se `ultimo_cron` dice `MAI` anche dopo diversi minuti, allora il cron e'
+> davvero morto e il Worker si muove **solo** se qualcuno apre il suo URL:
+> non aggiunge nulla al watcher GitHub, che invece gira da solo. Resta li'
+> inerte e non costa niente.
 
 Far girare **anche** il Worker, in parallelo a GitHub Actions e sullo stesso
 topic ntfy, da':
@@ -154,10 +168,17 @@ Nel Worker, **Settings → Bindings → Add**:
 Apri l'URL del worker (`https://testflight-watch.<tuo-sottodominio>.workers.dev`)
 in un browser: risponde con lo stato in JSON. Deve uscire una cosa cosi':
 
-    [{"code":"krUFQpyJ","prev":null,"state":"CLOSED","detail":"This beta isn't accepting..."}]
+    {
+      "ultimo_cron": { "quando": "2026-09-17T15:04:00.000Z", "secondi_fa": 37 },
+      "slot": [{"code":"krUFQpyJ","prev":"CLOSED","state":"CLOSED","detail":"This beta isn't accepting..."}]
+    }
 
-Se vedi `"state":"CLOSED"` funziona. Se vedi un errore su `STATE`, il binding
-KV del punto 3 non e' stato salvato.
+Se vedi `"state":"CLOSED"` il controllo funziona. Se vedi un errore su `STATE`,
+il binding KV del punto 3 non e' stato salvato.
+
+`ultimo_cron` e' la risposta alla domanda "il cron gira?". Aspetta tre minuti
+dopo il deploy, poi ricarica: se `secondi_fa` e' sotto il centinaio e cala a
+ogni ricarica, il cron gira. Se resta `MAI`, no.
 
 ### Importante: la quota di ntfy.sh e' per indirizzo IP
 
@@ -181,7 +202,9 @@ indipendente da ntfy: se uno dei due ha un disservizio, l'altro passa lo stesso.
 1. Crea un bot con **@BotFather** (`/newbot`) e copia il token.
 2. Aggiungilo come **secret** `TELEGRAM_BOT_TOKEN`.
 3. Scrivi a **@userinfobot**: ti risponde col tuo ID numerico. Mettilo in
-   `TELEGRAM_CHAT_ID` (variabile normale, non e' un segreto).
+   `TELEGRAM_CHAT_ID`. Sul repo GitHub va bene indifferentemente come Secret o
+   come Variable: il workflow guarda in entrambi i posti. Non e' un segreto,
+   quindi Variable e' piu' comodo (si rilegge, un Secret no).
 4. **Apri il tuo bot e mandagli `/start`.**
 
 Il punto 4 non e' opzionale e non e' un dettaglio: Telegram vieta a un bot di

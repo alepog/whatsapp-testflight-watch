@@ -218,12 +218,33 @@ async function checkAll(env) {
 
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(checkAll(env));
+    // Sonda: timbra SEMPRE, prima di qualsiasi altra cosa. Serve a distinguere
+    // "il cron non parte" da "il cron parte ma non lascia tracce visibili".
+    // I contatori della dashboard misurano le richieste HTTP, non le
+    // invocazioni schedulate, quindi restano fermi anche a cron funzionante:
+    // non sono una prova. Questo timbro si'. Vedi `ultimo_cron` nella risposta
+    // HTTP del worker.
+    ctx.waitUntil(
+      (async () => {
+        await env.STATE.put("_last_cron", String(Date.now()));
+        await checkAll(env);
+      })()
+    );
   },
   // Apri l'URL del worker nel browser per vedere lo stato e provare il deploy.
   async fetch(request, env) {
+    const lastCron = Number((await env.STATE.get("_last_cron")) || 0);
     const results = await checkAll(env);
-    return new Response(JSON.stringify(results, null, 2), {
+    const body = {
+      ultimo_cron: lastCron
+        ? {
+            quando: new Date(lastCron).toISOString(),
+            secondi_fa: Math.round((Date.now() - lastCron) / 1000),
+          }
+        : "MAI - nessuna invocazione schedulata da quando questa sonda e' attiva",
+      slot: results,
+    };
+    return new Response(JSON.stringify(body, null, 2), {
       headers: { "content-type": "application/json" },
     });
   },
