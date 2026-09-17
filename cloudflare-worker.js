@@ -13,7 +13,7 @@
  *   - un secret               NTFY_TOPIC
  *   - opzionale               NTFY_TOKEN  (token di un account ntfy.sh)
  *   - opzionale               TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
- *   - un cron trigger         */5 * * * *
+ *   - un cron trigger         ogni 5 minuti (vedi README)
  */
 
 const UA =
@@ -115,7 +115,7 @@ const esc = (s) =>
 
 // HTML e non Markdown: il testo di stato lo scrive Apple, e un underscore o un
 // asterisco spaiato manderebbe in errore il parsing dell'intero messaggio.
-function telegramBody(title, message, url, tags) {
+function telegramBody(title, message, url, tags, links) {
   const emoji = TG_EMOJI[tags] || TG_EMOJI.eyes;
   const nl = message.indexOf("\n");
   const testa = nl === -1 ? message : message.slice(0, nl);
@@ -123,11 +123,14 @@ function telegramBody(title, message, url, tags) {
   const righe = [`${emoji} <b>${esc(FONTE)} · ${esc(title)}</b>`, "", esc(testa)];
   // La coda e' il testo grezzo di Apple: in corsivo si legge come citazione.
   if (coda) righe.push(`<i>${esc(coda)}</i>`);
-  righe.push("", `<a href="${esc(url)}">Apri in TestFlight</a>`);
+  // Un link per codice: il battito parla di piu' beta, e un link generico a
+  // testflight.apple.com apre l'app sulla schermata iniziale, non sul beta.
+  const voci = links && links.length ? links : [["Apri in TestFlight", url]];
+  righe.push("", voci.map(([t, u]) => `<a href="${esc(u)}">${esc(t)}</a>`).join(" · "));
   return righe.join("\n");
 }
 
-async function notifyTelegram(env, title, message, url, tags) {
+async function notifyTelegram(env, title, message, url, tags, links) {
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return null;
   try {
     const r = await fetch(
@@ -137,7 +140,7 @@ async function notifyTelegram(env, title, message, url, tags) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           chat_id: env.TELEGRAM_CHAT_ID,
-          text: telegramBody(title, message, url, tags),
+          text: telegramBody(title, message, url, tags, links),
           parse_mode: "HTML",
           disable_web_page_preview: true,
         }),
@@ -156,11 +159,11 @@ async function notifyTelegram(env, title, message, url, tags) {
 
 // Prova ogni canale configurato. Basta che UNO arrivi perche' la notifica sia
 // consegnata; se falliscono tutti lo stato non viene salvato e si riprova.
-async function notify(env, title, message, url, priority, tags) {
+async function notify(env, title, message, url, priority, tags, links) {
   const esiti = (
     await Promise.all([
       notifyNtfy(env, title, message, url, priority, tags),
-      notifyTelegram(env, title, message, url, tags),
+      notifyTelegram(env, title, message, url, tags, links),
     ])
   ).filter((e) => e !== null);
 
@@ -271,9 +274,15 @@ async function checkAll(env) {
   if (battitoDovuto(now, lastHb)) {
     // Al primo giro in assoluto non si avvisa: e' la nascita, non un battito.
     if (lastHb) {
+      const righeStato = results.map((r) => `${r.code} = ${r.state}`).join("\n");
+      const collegamenti = results.map((r) => [
+        r.code,
+        `https://testflight.apple.com/join/${r.code}`,
+      ]);
       await notify(env, "Watcher Cloudflare vivo",
-        results.map((r) => `${r.code}=${r.state}`).join(", "),
-        "https://testflight.apple.com/", "min", "heartbeat");
+        `Controllo regolare in corso.\n${righeStato}`,
+        collegamenti[0] ? collegamenti[0][1] : "https://testflight.apple.com/",
+        "min", "heartbeat", collegamenti);
     }
     await env.STATE.put("_heartbeat", String(now));
   }

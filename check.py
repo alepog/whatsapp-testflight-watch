@@ -116,7 +116,7 @@ TG_EMOJI = {
 }
 
 
-def telegram_body(title, message, url, tags):
+def telegram_body(title, message, url, tags, links=None):
     """Messaggio Telegram in HTML.
 
     HTML e non Markdown: il testo di stato lo scrive Apple, e un singolo
@@ -131,11 +131,16 @@ def telegram_body(title, message, url, tags):
     # come citazione e non si confonde con la frase scritta da noi.
     if coda.strip():
         righe.append(f"<i>{html.escape(coda.strip())}</i>")
-    righe += ["", f'<a href="{html.escape(url, quote=True)}">Apri in TestFlight</a>']
+    # Un link per codice: il battito parla di piu' beta, e un link generico a
+    # testflight.apple.com apre l'app sulla schermata iniziale, non sul beta.
+    voci = links or [("Apri in TestFlight", url)]
+    righe += ["", " · ".join(
+        f'<a href="{html.escape(u, quote=True)}">{html.escape(t)}</a>' for t, u in voci
+    )]
     return "\n".join(righe)
 
 
-def notify(title, message, url, priority="default", tags="eyes"):
+def notify(title, message, url, priority="default", tags="eyes", links=None):
     """Return True se almeno un canale ha ricevuto, o se non ne e' configurato."""
     sent = []
     failed = []
@@ -179,7 +184,7 @@ def notify(title, message, url, priority="default", tags="eyes"):
         payload = urllib.parse.urlencode(
             {
                 "chat_id": chat,
-                "text": telegram_body(title, message, url, tags),
+                "text": telegram_body(title, message, url, tags, links),
                 "parse_mode": "HTML",
                 "disable_web_page_preview": "true",
             }
@@ -328,9 +333,14 @@ def main():
         # Al primo giro in assoluto non si avvisa: non e' un battito, e' la
         # nascita. Si registra e basta, il primo vero battito e' domani.
         if last_hb:
-            alive = ", ".join(f"{c}={v['state']}" for c, v in sorted(new.items()))
+            codici = [c for c in sorted(new) if c != "_meta"]
+            alive = "\n".join(f"{c} = {new[c]['state']}" for c in codici)
+            collegamenti = [
+                (c, f"https://testflight.apple.com/join/{c}") for c in codici
+            ]
             notify("Watcher vivo", f"Controllo regolare in corso.\n{alive}",
-                   "https://testflight.apple.com/", "min", "heartbeat")
+                   collegamenti[0][1] if collegamenti else "https://testflight.apple.com/",
+                   "min", "heartbeat", links=collegamenti)
         meta["last_heartbeat"] = now
 
     new["_meta"] = meta
