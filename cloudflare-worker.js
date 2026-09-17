@@ -96,6 +96,36 @@ async function notifyNtfy(env, title, message, url, priority, tags) {
 // senza etichetta non distingueresti un GitHub morto da un Cloudflare morto.
 const FONTE = "CldF";
 
+// Il sorgente resta in ASCII puro: passa per gli appunti prima di arrivare
+// nell'editor di Cloudflare, e un carattere letterale li' si rompe. Un "\u00b7"
+// letterale e' finito in produzione come "\u00ac\u2211".
+const PUNTO = "\u00B7";
+const TRATTINO = "\u2014";
+
+// Un codice invito non dice niente a chi legge la notifica alle 9 del mattino.
+const STATI = {
+  OPEN: "APERTO",
+  CLOSED: "chiuso",
+  GONE: "link morto (404)",
+  ERROR: "errore di controllo",
+  UNKNOWN: "stato non riconosciuto",
+};
+
+// "YcmGWyxV:WhatsApp iOS, krUFQpyJ" -> [[codice, nome], ...]. Nome facoltativo.
+function leggiCodici(raw) {
+  return (raw || "")
+    .split(",")
+    .map((pezzo) => {
+      const t = pezzo.trim();
+      if (!t) return null;
+      const i = t.indexOf(":");
+      const codice = (i === -1 ? t : t.slice(0, i)).trim();
+      const nome = (i === -1 ? "" : t.slice(i + 1)).trim();
+      return codice ? [codice, nome || codice] : null;
+    })
+    .filter(Boolean);
+}
+
 // Le stesse tag che ntfy usa per le sue icone, riusate come emoji su Telegram.
 //
 // La spunta e la croce rispondono a una domanda sola, a colpo d'occhio: il
@@ -115,22 +145,29 @@ const esc = (s) =>
 
 // HTML e non Markdown: il testo di stato lo scrive Apple, e un underscore o un
 // asterisco spaiato manderebbe in errore il parsing dell'intero messaggio.
-function telegramBody(title, message, url, tags, links) {
+function telegramBody(title, message, url, tags, links, righeStato) {
   const emoji = TG_EMOJI[tags] || TG_EMOJI.eyes;
   const nl = message.indexOf("\n");
   const testa = nl === -1 ? message : message.slice(0, nl);
   const coda = nl === -1 ? "" : message.slice(nl + 1).trim();
-  const righe = [`${emoji} <b>${esc(FONTE)} · ${esc(title)}</b>`, "", esc(testa)];
+  const righe = [`${emoji} <b>${esc(FONTE)} ${PUNTO} ${esc(title)}</b>`, ""];
+  if (testa) righe.push(esc(testa));
   // La coda e' il testo grezzo di Apple: in corsivo si legge come citazione.
   if (coda) righe.push(`<i>${esc(coda)}</i>`);
-  // Un link per codice: il battito parla di piu' beta, e un link generico a
-  // testflight.apple.com apre l'app sulla schermata iniziale, non sul beta.
-  const voci = links && links.length ? links : [["Apri in TestFlight", url]];
-  righe.push("", voci.map(([t, u]) => `<a href="${esc(u)}">${esc(t)}</a>`).join(" · "));
+  // Il battito elenca i beta, uno per riga, col nome cliccabile: un link
+  // generico a testflight.apple.com apre l'app sulla schermata iniziale.
+  if (righeStato && righeStato.length) {
+    for (const [nome, u, stato] of righeStato) {
+      righe.push(`<a href="${esc(u)}">${esc(nome)}</a> ${TRATTINO} ${esc(stato)}`);
+    }
+  } else {
+    const voci = links && links.length ? links : [["Apri in TestFlight", url]];
+    righe.push("", voci.map(([t, u]) => `<a href="${esc(u)}">${esc(t)}</a>`).join(` ${PUNTO} `));
+  }
   return righe.join("\n");
 }
 
-async function notifyTelegram(env, title, message, url, tags, links) {
+async function notifyTelegram(env, title, message, url, tags, links, righeStato) {
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return null;
   try {
     const r = await fetch(
@@ -140,7 +177,7 @@ async function notifyTelegram(env, title, message, url, tags, links) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           chat_id: env.TELEGRAM_CHAT_ID,
-          text: telegramBody(title, message, url, tags, links),
+          text: telegramBody(title, message, url, tags, links, righeStato),
           parse_mode: "HTML",
           disable_web_page_preview: true,
         }),
@@ -159,11 +196,11 @@ async function notifyTelegram(env, title, message, url, tags, links) {
 
 // Prova ogni canale configurato. Basta che UNO arrivi perche' la notifica sia
 // consegnata; se falliscono tutti lo stato non viene salvato e si riprova.
-async function notify(env, title, message, url, priority, tags, links) {
+async function notify(env, title, message, url, priority, tags, links, righeStato) {
   const esiti = (
     await Promise.all([
       notifyNtfy(env, title, message, url, priority, tags),
-      notifyTelegram(env, title, message, url, tags, links),
+      notifyTelegram(env, title, message, url, tags, links, righeStato),
     ])
   ).filter((e) => e !== null);
 
@@ -200,10 +237,9 @@ function battitoDovuto(nowMs, lastMs) {
 }
 
 async function checkAll(env) {
-  const codes = (env.TF_CODES || "krUFQpyJ,YcmGWyxV")
-    .split(",")
-    .map((c) => c.trim())
-    .filter(Boolean);
+  const coppie = leggiCodici(env.TF_CODES || "YcmGWyxV:WhatsApp iOS,krUFQpyJ");
+  const codes = coppie.map(([c]) => c);
+  const nomi = Object.fromEntries(coppie);
 
   const results = [];
   const now = Date.now();
@@ -232,25 +268,25 @@ async function checkAll(env) {
     // Se Apple inizia a rifiutare gli IP di Cloudflare, dillo.
     if (streak === ERROR_STREAK_ALERT) {
       await notify(env, "Watcher Cloudflare in errore",
-        `${code}: ${ERROR_STREAK_ALERT} controlli falliti di fila.\n${detail}`,
+        `${nomi[code]}: ${ERROR_STREAK_ALERT} controlli falliti di fila.\n${detail}`,
         url, "high", "warning");
     }
 
     if (state !== prev) {
       if (state === "OPEN") {
         delivery = await notify(env, "SLOT TESTFLIGHT APERTO",
-          `Il beta ${code} accetta tester. Vai SUBITO.\n${detail}`,
+          `${nomi[code]} accetta tester. Vai SUBITO.\n${detail}`,
           url, "urgent", "rotating_light");
       } else if (prev === "OPEN") {
         delivery = await notify(env, "Slot richiuso",
-          `${code} non accetta piu' tester.`, url, "low", "lock");
+          `${nomi[code]} non accetta piu' tester.`, url, "low", "lock");
       } else if (state === "UNKNOWN") {
         delivery = await notify(env, "Stato TestFlight non riconosciuto",
-          `${code}: pagina non riconosciuta, controlla a mano.\n${detail}`,
+          `${nomi[code]}: pagina non riconosciuta, controlla a mano.\n${detail}`,
           url, "high", "warning");
       } else if (state === "GONE" && prev) {
         delivery = await notify(env, "Codice invito sparito",
-          `${code} ora risponde 404.`, url, "default", "ghost");
+          `${nomi[code]} ora risponde 404.`, url, "default", "ghost");
       }
     }
 
@@ -261,7 +297,7 @@ async function checkAll(env) {
       delivery !== null &&
       !delivery.startsWith("inviata") &&
       delivery !== "non-configurato";
-    results.push({ code, prev, state, detail, notifica: delivery, riprovera: stuck });
+    results.push({ code, nome: nomi[code], prev, state, detail, notifica: delivery, riprovera: stuck });
 
     if (!stuck && (state !== prev || streak !== (saved.error_streak || 0))) {
       await env.STATE.put(code, JSON.stringify({ state, error_streak: streak, at: now }));
@@ -274,15 +310,14 @@ async function checkAll(env) {
   if (battitoDovuto(now, lastHb)) {
     // Al primo giro in assoluto non si avvisa: e' la nascita, non un battito.
     if (lastHb) {
-      const righeStato = results.map((r) => `${r.code} = ${r.state}`).join("\n");
-      const collegamenti = results.map((r) => [
-        r.code,
+      const righeStato = results.map((r) => [
+        r.nome,
         `https://testflight.apple.com/join/${r.code}`,
+        STATI[r.state] || r.state,
       ]);
-      await notify(env, "Watcher Cloudflare vivo",
-        `Controllo regolare in corso.\n${righeStato}`,
-        collegamenti[0] ? collegamenti[0][1] : "https://testflight.apple.com/",
-        "min", "heartbeat", collegamenti);
+      await notify(env, "Watcher Cloudflare vivo", "",
+        `https://testflight.apple.com/join/${results[0].code}`,
+        "min", "heartbeat", null, righeStato);
     }
     await env.STATE.put("_heartbeat", String(now));
   }

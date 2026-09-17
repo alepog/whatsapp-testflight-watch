@@ -100,6 +100,37 @@ def classify(status, body):
 # senza etichetta non distingueresti un GitHub morto da un Cloudflare morto.
 FONTE = os.environ.get("WATCHER_LABEL", "").strip() or "Git"
 
+# Il repo resta in ASCII puro anche nelle stringhe: il sorgente del worker
+# passa per gli appunti prima di arrivare su Cloudflare, e un carattere
+# letterale li' si rompe (un "\u00b7" e' diventato "\u00ac\u2211" in produzione).
+PUNTO = "\u00b7"
+
+# Un codice invito non dice niente a chi legge la notifica alle 9 del mattino.
+STATI = {
+    "OPEN": "APERTO",
+    "CLOSED": "chiuso",
+    "GONE": "link morto (404)",
+    "ERROR": "errore di controllo",
+    "UNKNOWN": "stato non riconosciuto",
+}
+
+
+def leggi_codici(raw):
+    """"YcmGWyxV:WhatsApp iOS, krUFQpyJ" -> [(codice, nome), ...].
+
+    Il nome dopo i due punti e' facoltativo; senza, il nome e' il codice.
+    """
+    coppie = []
+    for pezzo in raw.split(","):
+        pezzo = pezzo.strip()
+        if not pezzo:
+            continue
+        codice, _, nome = pezzo.partition(":")
+        codice = codice.strip()
+        if codice:
+            coppie.append((codice, nome.strip() or codice))
+    return coppie
+
 # Le stesse tag che ntfy usa per le sue icone, riusate come emoji su Telegram:
 # un solo posto da toccare quando si aggiunge un tipo di avviso.
 #
@@ -116,7 +147,7 @@ TG_EMOJI = {
 }
 
 
-def telegram_body(title, message, url, tags, links=None):
+def telegram_body(title, message, url, tags, links=None, righe_stato=None):
     """Messaggio Telegram in HTML.
 
     HTML e non Markdown: il testo di stato lo scrive Apple, e un singolo
@@ -126,21 +157,30 @@ def telegram_body(title, message, url, tags, links=None):
     """
     emoji = TG_EMOJI.get(tags, TG_EMOJI["eyes"])
     testa, _, coda = message.partition("\n")
-    righe = [f"{emoji} <b>{html.escape(FONTE)} · {html.escape(title)}</b>", "", html.escape(testa)]
+    righe = [f"{emoji} <b>{html.escape(FONTE)} {PUNTO} {html.escape(title)}</b>", ""]
+    if testa:
+        righe.append(html.escape(testa))
     # La seconda riga e' sempre il testo grezzo di Apple: in corsivo si legge
     # come citazione e non si confonde con la frase scritta da noi.
     if coda.strip():
         righe.append(f"<i>{html.escape(coda.strip())}</i>")
-    # Un link per codice: il battito parla di piu' beta, e un link generico a
-    # testflight.apple.com apre l'app sulla schermata iniziale, non sul beta.
-    voci = links or [("Apri in TestFlight", url)]
-    righe += ["", " · ".join(
-        f'<a href="{html.escape(u, quote=True)}">{html.escape(t)}</a>' for t, u in voci
-    )]
+    # Il battito elenca i beta, uno per riga, col nome cliccabile: un link
+    # generico a testflight.apple.com apre l'app sulla schermata iniziale.
+    if righe_stato:
+        for nome, u, stato in righe_stato:
+            righe.append(
+                f'<a href="{html.escape(u, quote=True)}">{html.escape(nome)}</a>'
+                f" \u2014 {html.escape(stato)}"
+            )
+    else:
+        voci = links or [("Apri in TestFlight", url)]
+        righe += ["", f" {PUNTO} ".join(
+            f'<a href="{html.escape(u, quote=True)}">{html.escape(t)}</a>' for t, u in voci
+        )]
     return "\n".join(righe)
 
 
-def notify(title, message, url, priority="default", tags="eyes", links=None):
+def notify(title, message, url, priority="default", tags="eyes", links=None, righe_stato=None):
     """Return True se almeno un canale ha ricevuto, o se non ne e' configurato."""
     sent = []
     failed = []
@@ -184,7 +224,7 @@ def notify(title, message, url, priority="default", tags="eyes", links=None):
         payload = urllib.parse.urlencode(
             {
                 "chat_id": chat,
-                "text": telegram_body(title, message, url, tags, links),
+                "text": telegram_body(title, message, url, tags, links, righe_stato),
                 "parse_mode": "HTML",
                 "disable_web_page_preview": "true",
             }
@@ -242,7 +282,9 @@ def load_state():
 
 
 def main():
-    codes = [c.strip() for c in os.environ.get("TF_CODES", "").split(",") if c.strip()]
+    coppie = leggi_codici(os.environ.get("TF_CODES", ""))
+    codes = [c for c, _ in coppie]
+    nomi = dict(coppie)
     if not codes:
         print("TF_CODES non impostata: niente da controllare.", file=sys.stderr)
         return 1
@@ -272,7 +314,7 @@ def main():
         if streak == ERROR_STREAK_ALERT:
             notify(
                 "Watcher in errore",
-                f"{code}: {ERROR_STREAK_ALERT} controlli falliti di fila. "
+                f"{nomi[code]}: {ERROR_STREAK_ALERT} controlli falliti di fila. "
                 f"Apple potrebbe bloccare gli IP dei runner GitHub.\n{detail}",
                 url,
                 "high",
@@ -288,19 +330,19 @@ def main():
         if state == "OPEN":
             delivered = notify(
                 "SLOT TESTFLIGHT APERTO",
-                f"Il beta {code} sta accettando tester. Vai SUBITO.\n{detail}",
+                f"{nomi[code]} sta accettando tester. Vai SUBITO.\n{detail}",
                 url,
                 priority="urgent",
                 tags="rotating_light",
             )
         elif prev == "OPEN":
             delivered = notify(
-                "Slot richiuso", f"Il beta {code} non accetta piu' tester.\n{detail}",
+                "Slot richiuso", f"{nomi[code]} non accetta piu' tester.\n{detail}",
                 url, "low", "lock")
         elif state == "UNKNOWN":
             delivered = notify(
                 "Stato TestFlight non riconosciuto",
-                f"La pagina di {code} non corrisponde a nessuno stato noto - "
+                f"La pagina di {nomi[code]} non corrisponde a nessuno stato noto - "
                 f"controlla a mano, potrebbe essere aperto.\n{detail}",
                 url,
                 "high",
@@ -308,7 +350,7 @@ def main():
             )
         elif state == "GONE" and prev:
             delivered = notify(
-                "Codice invito sparito", f"{code} ora risponde 404.", url, "default", "ghost")
+                "Codice invito sparito", f"{nomi[code]} ora risponde 404.", url, "default", "ghost")
         elif state == "ERROR" and prev not in (None, "ERROR"):
             print("  (errore transitorio, nessuna notifica)")
 
@@ -333,14 +375,15 @@ def main():
         # Al primo giro in assoluto non si avvisa: non e' un battito, e' la
         # nascita. Si registra e basta, il primo vero battito e' domani.
         if last_hb:
-            codici = [c for c in sorted(new) if c != "_meta"]
-            alive = "\n".join(f"{c} = {new[c]['state']}" for c in codici)
-            collegamenti = [
-                (c, f"https://testflight.apple.com/join/{c}") for c in codici
+            righe_stato = [
+                (nomi[c], f"https://testflight.apple.com/join/{c}",
+                 STATI.get(new[c]["state"], new[c]["state"]))
+                for c in codes if c in new
             ]
-            notify("Watcher vivo", f"Controllo regolare in corso.\n{alive}",
-                   collegamenti[0][1] if collegamenti else "https://testflight.apple.com/",
-                   "min", "heartbeat", links=collegamenti)
+            print("  " + "; ".join(f"{n}={s}" for n, _, s in righe_stato))
+            notify("Watcher vivo", "",
+                   f"https://testflight.apple.com/join/{codes[0]}",
+                   "min", "heartbeat", righe_stato=righe_stato)
         meta["last_heartbeat"] = now
 
     new["_meta"] = meta

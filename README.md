@@ -52,7 +52,7 @@ Tab **Variables** → New repository variable:
 
 | Nome | Valore |
 |---|---|
-| `TF_CODES` | `krUFQpyJ,YcmGWyxV` |
+| `TF_CODES` | `YcmGWyxV:WhatsApp iOS,krUFQpyJ` |
 | `HEARTBEAT_HOUR` | `9` |
 | `TELEGRAM_CHAT_ID` | il tuo ID numerico (vedi sotto) |
 
@@ -157,7 +157,7 @@ Nel Worker, **Settings → Bindings → Add**:
 | Tipo | Nome | Valore |
 |---|---|---|
 | KV namespace | `STATE` | il namespace `testflight-state` |
-| Variable | `TF_CODES` | `krUFQpyJ,YcmGWyxV` |
+| Variable | `TF_CODES` | `YcmGWyxV:WhatsApp iOS,krUFQpyJ` |
 | Secret | `NTFY_TOPIC` | il tuo topic ntfy |
 
 > `NTFY_TOPIC` va aggiunto come **Secret**, non come Variable: le Variable si
@@ -252,9 +252,25 @@ aspettando: sono cose diverse e per questo hanno icone diverse.
 
 ## Aggiungere nuovi codici invito
 
-WhatsApp cambia link nel tempo. Il link corrente lo pubblica WABetaInfo su
-<https://wabetainfo.com/testflight/>. Quando ne esce uno nuovo, aggiungilo alla
-variabile `TF_CODES` separato da virgola: il watcher li controlla tutti.
+WhatsApp cambia link nel tempo. Il link corrente lo pubblica WABetaInfo sulla
+pagina dedicata <https://wabetainfo.com/wa-testflight/> — non sull'indice
+generale, dove la scheda WhatsApp rimanda qui invece di linkare TestFlight.
+Al 17/09/2026 il codice pubblicato e' `YcmGWyxV`.
+
+I codici si separano con la virgola, e ognuno puo' avere un nome dopo i due
+punti:
+
+    TF_CODES = "YcmGWyxV:WhatsApp iOS,krUFQpyJ"
+
+Il nome e' quello che leggi nella notifica. Senza nome compare il codice, che
+alle 9 del mattino non dice niente a nessuno.
+
+> **Una beta chiusa non rivela di che app sia.** Verificato scaricando due
+> pagine di codici diversi: a parte il codice nell'URL sono identiche byte per
+> byte, 39045 byte, e l'unico `app-id` presente e' 899247664, che e' TestFlight
+> stesso. Il nome dell'app compare solo quando il programma apre, nel titolo
+> `Join the <App> beta`. Quindi di un codice che non trovi documentato da
+> nessuna parte non puoi sapere niente finche' non apre.
 
 ## Provarlo sul tuo Mac
 
