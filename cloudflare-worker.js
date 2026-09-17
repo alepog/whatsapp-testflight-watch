@@ -20,12 +20,39 @@ const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 " +
   "(KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 
+// Frasi che Apple mostra quando il link esiste ma non puoi entrare. Anche in
+// italiano: la CDN a volte serve la pagina localizzata a prescindere da
+// Accept-Language, visto succedere dal vivo sulla stessa URL.
 const CLOSED_MARKERS = [
   "isn't accepting any new testers",
   "this beta is full",
   "this beta has expired",
   "this beta isn't available",
+  "non si accettano nuovi tester",
+  "al completo",
+  "scaduta",
 ];
+
+// Titolo che nomina l'app, in inglese e in italiano.
+const TITOLO_APP = /(\bjoin the .+ beta\b|partecipa alla versione beta di)/i;
+
+// Dove sta la frase di stato. Il primo pattern esiste perche' nella pagina di
+// una beta PIENA dentro beta-status c'e' anche il div dell'icona dell'app: un
+// "(.*?)</div>" si ferma su quello e torna stringa vuota, cioe' proprio sulla
+// pagina in cui lo stato conta di piu'. Si chiude sul divider che segue.
+const STATUS_PATTERNS = [
+  /<div class="beta-status">(.*?)<div class="divider"/is,
+  /<div class="beta-status">(.*?)<\/div>\s*<\/div>/is,
+  /<div class="beta-status">(.*?)<\/div>/is,
+];
+
+function statoDichiarato(body) {
+  for (const p of STATUS_PATTERNS) {
+    const t = stripTags((body.match(p) || [, ""])[1]);
+    if (t) return t;
+  }
+  return "";
+}
 
 const ERROR_STREAK_ALERT = 10; // giri falliti di fila prima di gridare
 const HEARTBEAT_HOUR = 9; // ora locale del battito quotidiano
@@ -46,15 +73,17 @@ export function classify(status, body) {
   if (status !== 200) return ["ERROR", `HTTP ${status}`];
 
   const title = stripTags((body.match(/<title[^>]*>(.*?)<\/title>/is) || [, ""])[1]);
-  const betaStatus = stripTags(
-    (body.match(/<div class="beta-status">(.*?)<\/div>/is) || [, ""])[1]
-  );
+  const betaStatus = statoDichiarato(body);
   const detail = betaStatus || title || "(nessun testo di stato)";
   const hay = `${title} ${betaStatus}`.toLowerCase();
 
-  // Segnale positivo: Apple intitola "Join the <App> beta" quando e' aperto.
-  if (/\bjoin the .+ beta\b/i.test(title)) return ["OPEN", detail];
+  // Lo stato dichiarato batte il titolo, e l'ordine non e' un dettaglio: anche
+  // una beta PIENA si intitola "Join the <App> beta". Fidandosi prima del
+  // titolo si grida "aperto" su un beta che non accetta nessuno. Verificato
+  // dal vivo su WhatsApp Business. Il titolo nomina l'app, non dice se entri.
   if (CLOSED_MARKERS.some((m) => hay.includes(m))) return ["CLOSED", detail];
+  // Nessun "no" esplicito e la pagina nomina l'app: e' aperto.
+  if (TITOLO_APP.test(title)) return ["OPEN", detail];
   // Non corrisponde a niente di noto: avvisa comunque, mai restare in silenzio.
   return ["UNKNOWN", detail];
 }

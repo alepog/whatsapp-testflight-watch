@@ -8,18 +8,41 @@ Gira su GitHub Actions: niente server, niente NAS, niente Mac acceso.
 
 ## Come capisce se e' aperto
 
-Apple serve due pagine diverse allo stesso URL:
-
-| Stato | Cosa c'e' nell'HTML |
+| Stato della pagina | Cosa c'e' nell'HTML |
 |---|---|
-| chiuso | `<title>TestFlight - Apple</title>` + "This beta isn't accepting any new testers right now." |
-| **aperto** | `<title>Join the WhatsApp Messenger beta - TestFlight - Apple</title>` |
+| non accetta tester | titolo generico `TestFlight - Apple`, stato "This beta isn't accepting any new testers right now." |
+| **piena** | titolo `Join the <App> beta`, stato "This beta is full." |
+| **aperta** | titolo `Join the <App> beta`, nessuna frase di rifiuto |
 | codice morto | HTTP 404 |
 
-Il controllo si basa sul titolo `Join the ... beta`, verificato su beta realmente
-aperti. Se la pagina non corrisponde a nessuno stato noto (Apple rifa' l'HTML),
-lo stato diventa `UNKNOWN` e **ti avvisa lo stesso**: meglio un falso allarme
-che perdere lo slot in silenzio.
+Il controllo legge **prima lo stato dichiarato, poi il titolo**, e l'ordine non
+e' un dettaglio di stile.
+
+> **Il titolo non dice se puoi entrare: dice come si chiama l'app.**
+> Anche una beta *piena* si intitola `Join the <App> beta`. Verificato dal vivo
+> il 17/09/2026 su WhatsApp Business (`oscYikr0`), che era pieno e aveva
+> esattamente quel titolo. Guardando il titolo per primo, il watcher gridava
+> "SLOT APERTO" su un beta che non accettava nessuno: un falso allarme proprio
+> sull'unica notifica per cui vuoi che il telefono suoni.
+
+Da qui una conseguenza utile: una beta che *non accetta* tester e' anonima,
+mentre una beta **piena o aperta ti dice di che app e'**. Due pagine di codici
+diversi in stato "non accetta" sono identiche byte per byte (39045 byte), senza
+icona ne' nome: di un codice non documentato non si puo' sapere niente finche'
+non cambia stato.
+
+La frase di stato si legge fermandosi al `divider` che segue, non alla prima
+`</div>`: nella pagina di una beta piena dentro `beta-status` c'e' anche il div
+dell'icona dell'app, e un `(.*?)</div>` si ferma li' restituendo stringa vuota.
+Cioe' falliva proprio sulla pagina in cui lo stato conta di piu'.
+
+I marcatori sono riconosciuti in inglese **e in italiano**: la CDN di Apple a
+volte serve la pagina localizzata a prescindere da `Accept-Language`, e lo
+stesso URL a pochi minuti di distanza ha risposto prima in italiano e poi in
+inglese.
+
+Se la pagina non corrisponde a nessuno stato noto lo stato diventa `UNKNOWN` e
+**ti avvisa lo stesso**: meglio un falso allarme che perdere lo slot in silenzio.
 
 ## Setup (10 minuti, una volta sola)
 

@@ -22,14 +22,40 @@ UA = (
     "(KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 )
 
-# Phrases Apple serves when a public link exists but you cannot join.
+# Frasi che Apple mostra quando il link esiste ma non puoi entrare.
+# Anche in italiano: la CDN a volte serve la pagina localizzata a prescindere
+# da Accept-Language, e l'abbiamo vista succedere dal vivo.
 CLOSED_MARKERS = (
     "isn't accepting any new testers",
     "this beta is full",
     "this beta has expired",
     "this beta isn't available",
     "this beta build has expired",
+    "non si accettano nuovi tester",
+    "al completo",
+    "scaduta",
 )
+
+# Titolo di una pagina che nomina l'app, in inglese e in italiano.
+TITOLO_APP = r"(\bjoin the .+ beta\b|partecipa alla versione beta di)"
+
+# Dove sta la frase di stato. Il primo pattern esiste perche' nella pagina di
+# una beta PIENA dentro beta-status c'e' anche il div dell'icona dell'app: un
+# "(.*?)</div>" si ferma su quello e torna stringa vuota, cioe' proprio sulla
+# pagina in cui lo stato conta di piu'. Si chiude sul divider che segue.
+STATUS_PATTERNS = (
+    r'<div class="beta-status">(.*?)<div class="divider"',
+    r'<div class="beta-status">(.*?)</div>\s*</div>',
+    r'<div class="beta-status">(.*?)</div>',
+)
+
+
+def stato_dichiarato(body):
+    for pattern in STATUS_PATTERNS:
+        testo = text_of(pattern, body)
+        if testo:
+            return testo
+    return ""
 
 STATE_FILE = os.environ.get("STATE_FILE") or "state.json"
 
@@ -81,18 +107,23 @@ def classify(status, body):
         return "ERROR", f"HTTP {status}"
 
     title = text_of(r"<title[^>]*>(.*?)</title>", body)
-    beta_status = text_of(r'<div class="beta-status">(.*?)</div>', body)
+    beta_status = stato_dichiarato(body)
     detail = beta_status or title or "(nessun testo di stato trovato)"
     haystack = f"{title} {beta_status}".lower()
 
-    # Positive signal first: Apple titles an open page "Join the <App> beta".
-    if re.search(r"\bjoin the .+ beta\b", title, re.I):
-        return "OPEN", detail
+    # Lo stato dichiarato batte il titolo, e l'ordine non e' un dettaglio:
+    # anche una beta PIENA si intitola "Join the <App> beta". Fidandosi prima
+    # del titolo si grida "aperto" su un beta che non accetta nessuno.
+    # Verificato dal vivo su WhatsApp Business (oscYikr0), pieno e con quel
+    # titolo. Il titolo nomina l'app, non dice se puoi entrare.
     for marker in CLOSED_MARKERS:
         if marker in haystack:
             return "CLOSED", detail
-    # Page rendered but matches nothing we know: Apple changed the markup, or
-    # it is an open state we have not seen. Treat as noteworthy, never silent.
+    # Nessun "no" esplicito e la pagina nomina l'app: e' aperto.
+    if re.search(TITOLO_APP, title, re.I):
+        return "OPEN", detail
+    # Non corrisponde a niente di noto: Apple ha rifatto l'HTML, o e' uno stato
+    # che non abbiamo mai visto. Degno di nota, mai silenzio.
     return "UNKNOWN", detail
 
 
