@@ -188,13 +188,28 @@ Nel Worker, **Settings → Bindings → Add**:
 
 ### 4. Accendi il cron
 
-**Settings → Triggers → Cron Triggers → Add**, espressione:
+**Settings → Trigger events → Cron triggers → Add**, espressione:
 
-    */5 * * * *
+    * * * * *
 
-Cinque minuti sono piu' che sufficienti: la finestra in cui WhatsApp riapre
-dura da decine di minuti a qualche ora. Se vuoi il minuto metti `* * * * *`;
-costa 1.440 invocazioni al giorno sulle 100.000 gratuite, quindi si puo' fare.
+Un minuto sta largamente dentro il piano gratuito. Misurato: 1.440 invocazioni
+al giorno sulle 100.000, 2.880 letture KV sulle 100.000, un paio di scritture
+sulle 1.000, e ~3,5 ms di CPU per giro sui 10 consentiti. Il consumo piu' alto
+e' il 2,9% di un limite.
+
+> **Cambiare il cron dal pannello non basta: serve un deploy.**
+> Verificato il 17/09/2026. Passando da `*/5` a un minuto, la pagina Settings
+> mostrava subito "Every minute" e il campo `Next` avanzava di minuto in
+> minuto, ma per **sedici minuti** le esecuzioni nei log restavano etichettate
+> `*/5 * * * *`, puntuali ogni cinque. Il salvataggio del trigger non crea
+> nessuna versione nuova: in Version History non compariva niente.
+>
+> Basta forzare un deploy qualsiasi — si puo' aprire una variabile in
+> **Settings → Variables** e premere *Deploy* senza cambiarla. Il primo tick
+> `*/1 * * * *` e' arrivato entro il minuto successivo.
+>
+> Morale: dopo aver toccato il cron, guarda **Observability → Events** e
+> controlla l'espressione nella colonna Message, non quello che dice Settings.
 
 ### 5. Prova subito
 
