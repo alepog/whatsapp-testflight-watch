@@ -14,6 +14,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
@@ -192,6 +194,32 @@ def notify(title, message, url, priority="default", tags="eyes"):
     return bool(sent) or not failed
 
 
+def heartbeat_dovuto(now, last):
+    """True se oggi tocca il battito e non e' ancora partito.
+
+    Un battito "ogni N giorni" deriva: riparte dall'ultimo invio, e ogni giorno
+    slitta di qualche minuto finche' non ti arriva alle tre di notte. Ancorarlo
+    a un'ora del giorno lo tiene fermo.
+
+    Niente aritmetica di fusi: si guarda l'ora locale, e si confrontano due
+    date di calendario. Cosi' i due cambi d'ora dell'anno non sono un caso
+    particolare da gestire, semplicemente non esistono.
+
+    Il cron di GitHub arriva con 13-21 minuti di ritardo, quindi il battito
+    delle 9:00 arriva davvero fra le 9:00 e le 9:25. Per un "sono vivo" va bene.
+    """
+    conf = os.environ.get("HEARTBEAT_HOUR", "9").strip()
+    if not conf:  # stringa vuota = battito spento
+        return False
+    tz = ZoneInfo(os.environ.get("HEARTBEAT_TZ") or "Europe/Rome")
+    adesso = datetime.fromtimestamp(now, tz)
+    if adesso.hour < int(float(conf)):
+        return False
+    if not last:
+        return True  # mai battuto: oggi si registra soltanto
+    return datetime.fromtimestamp(last, tz).date() != adesso.date()
+
+
 def load_state():
     try:
         with open(STATE_FILE) as f:
@@ -287,9 +315,10 @@ def main():
 
     # Periodic "still alive" ping: if GitHub silently disables the schedule,
     # the missing heartbeat is the only way you would ever find out.
-    hb_days = float(os.environ.get("HEARTBEAT_DAYS", "0") or 0)
     last_hb = meta.get("last_heartbeat", 0)
-    if hb_days > 0 and now - last_hb >= hb_days * 86400:
+    if heartbeat_dovuto(now, last_hb):
+        # Al primo giro in assoluto non si avvisa: non e' un battito, e' la
+        # nascita. Si registra e basta, il primo vero battito e' domani.
         if last_hb:
             alive = ", ".join(f"{c}={v['state']}" for c, v in sorted(new.items()))
             notify("Watcher vivo", f"Controllo regolare in corso.\n{alive}",

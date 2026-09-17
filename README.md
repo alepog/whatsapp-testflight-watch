@@ -53,7 +53,8 @@ Tab **Variables** → New repository variable:
 | Nome | Valore |
 |---|---|
 | `TF_CODES` | `krUFQpyJ,YcmGWyxV` |
-| `HEARTBEAT_DAYS` | `7` |
+| `HEARTBEAT_HOUR` | `9` |
+| `TELEGRAM_CHAT_ID` | il tuo ID numerico (vedi sotto) |
 
 Tab **Secrets** → New repository secret:
 
@@ -87,8 +88,18 @@ mail prima: basta un commit qualsiasi per riazzerare il contatore.
 
 **Apple potrebbe bloccare gli IP dei runner.** Se succede, dopo 6 controlli
 falliti di fila ricevi una notifica "Watcher in errore" invece di restare
-all'oscuro. Con `HEARTBEAT_DAYS=7` ricevi anche un "watcher vivo" settimanale:
-se smette di arrivare, qualcosa si e' rotto.
+all'oscuro.
+
+**Il battito quotidiano.** Con `HEARTBEAT_HOUR=9` ricevi ogni mattina un
+"Watcher vivo" con lo stato dei codici. Serve a una cosa sola, ma importante:
+un watcher che muore in silenzio e' indistinguibile da un watcher che non ha
+niente da dire. Se una mattina il messaggio non arriva, sai che devi guardare.
+
+L'ora e' ancorata al calendario locale (`HEARTBEAT_TZ`, default `Europe/Rome`):
+si batte al primo controllo dopo le 9:00 di ogni giorno, una volta sola. Non
+deriva col passare dei giorni e non ha casi particolari ai cambi dell'ora.
+Siccome il cron di GitHub ritarda, in pratica arriva fra le 9:00 e le 9:25.
+Per spegnerlo, imposta `HEARTBEAT_HOUR` a stringa vuota.
 
 ## Cloudflare: il secondo watcher
 
@@ -215,10 +226,10 @@ viene salvato e al giro dopo riprova.
 
 ### Come capisci quale dei due e' morto
 
-I due watcher mandano heartbeat con titoli diversi, una volta a settimana:
-"Watcher vivo" da GitHub, "Watcher Cloudflare vivo" da Cloudflare. Due battiti =
-tutto a posto. Uno solo = quell'altro e' morto, e sai dove guardare. Nessuno dei
-due = sono morti entrambi.
+I due watcher mandano il battito con titoli diversi, ogni mattina alle 9:
+"Watcher vivo" da GitHub, "Watcher Cloudflare vivo" da Cloudflare. Due messaggi
+= tutto a posto. Uno solo = quell'altro e' morto, e sai gia' dove guardare.
+Nessuno dei due = sono morti entrambi, o e' Telegram ad avere problemi.
 
 ## Aggiungere nuovi codici invito
 

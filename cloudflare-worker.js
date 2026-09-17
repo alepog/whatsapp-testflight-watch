@@ -28,7 +28,8 @@ const CLOSED_MARKERS = [
 ];
 
 const ERROR_STREAK_ALERT = 10; // giri falliti di fila prima di gridare
-const HEARTBEAT_DAYS = 7;
+const HEARTBEAT_HOUR = 9; // ora locale del battito quotidiano
+const HEARTBEAT_TZ = "Europe/Rome";
 
 function stripTags(s) {
   return s
@@ -160,6 +161,33 @@ async function notify(env, title, message, url, priority, tags) {
   return ok.length ? `inviata (${ok.join("+")})` : esiti.join(", ");
 }
 
+// True se oggi tocca il battito e non e' ancora partito.
+//
+// Un battito "ogni N giorni" deriva: riparte dall'ultimo invio e ogni giorno
+// slitta di qualche minuto, finche' non ti arriva alle tre di notte. Ancorarlo
+// a un'ora del giorno lo tiene fermo.
+//
+// Niente aritmetica di fusi: si guarda l'ora locale e si confrontano due date
+// di calendario. Cosi' i due cambi d'ora dell'anno non sono un caso da gestire,
+// semplicemente non esistono.
+function battitoDovuto(nowMs, lastMs) {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: HEARTBEAT_TZ,
+    hourCycle: "h23",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
+  });
+  const leggi = (ms) => {
+    const p = Object.fromEntries(
+      fmt.formatToParts(new Date(ms)).map((x) => [x.type, x.value])
+    );
+    return { giorno: `${p.year}-${p.month}-${p.day}`, ora: Number(p.hour) };
+  };
+  const adesso = leggi(nowMs);
+  if (adesso.ora < HEARTBEAT_HOUR) return false;
+  if (!lastMs) return true; // mai battuto: oggi si registra soltanto
+  return leggi(lastMs).giorno !== adesso.giorno;
+}
+
 async function checkAll(env) {
   const codes = (env.TF_CODES || "krUFQpyJ,YcmGWyxV")
     .split(",")
@@ -229,10 +257,11 @@ async function checkAll(env) {
     }
   }
 
-  // Battito settimanale con titolo distinto da quello di GitHub: cosi' capisci
+  // Battito quotidiano con titolo distinto da quello di GitHub: cosi' capisci
   // QUALE dei due watcher e' morto, non solo che ne e' morto uno.
   const lastHb = Number((await env.STATE.get("_heartbeat")) || 0);
-  if (now - lastHb >= HEARTBEAT_DAYS * 86400000) {
+  if (battitoDovuto(now, lastHb)) {
+    // Al primo giro in assoluto non si avvisa: e' la nascita, non un battito.
     if (lastHb) {
       await notify(env, "Watcher Cloudflare vivo",
         results.map((r) => `${r.code}=${r.state}`).join(", "),
