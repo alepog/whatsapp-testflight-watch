@@ -94,6 +94,37 @@ def classify(status, body):
     return "UNKNOWN", detail
 
 
+# Le stesse tag che ntfy usa per le sue icone, riusate come emoji su Telegram:
+# un solo posto da toccare quando si aggiunge un tipo di avviso.
+TG_EMOJI = {
+    "rotating_light": "\U0001f6a8",
+    "warning": "\u26a0\ufe0f",
+    "lock": "\U0001f512",
+    "ghost": "\U0001f47b",
+    "heartbeat": "\U0001f493",
+    "eyes": "\U0001f440",
+}
+
+
+def telegram_body(title, message, url, tags):
+    """Messaggio Telegram in HTML.
+
+    HTML e non Markdown: il testo di stato lo scrive Apple, e un singolo
+    underscore o asterisco spaiato fa fallire il parsing dell'intero messaggio,
+    con Telegram che risponde 400 e la notifica che non parte. In HTML bastano
+    tre caratteri da escapare e il problema non esiste.
+    """
+    emoji = TG_EMOJI.get(tags, TG_EMOJI["eyes"])
+    testa, _, coda = message.partition("\n")
+    righe = [f"{emoji} <b>{html.escape(title)}</b>", "", html.escape(testa)]
+    # La seconda riga e' sempre il testo grezzo di Apple: in corsivo si legge
+    # come citazione e non si confonde con la frase scritta da noi.
+    if coda.strip():
+        righe.append(f"<i>{html.escape(coda.strip())}</i>")
+    righe += ["", f'<a href="{html.escape(url, quote=True)}">Apri in TestFlight</a>']
+    return "\n".join(righe)
+
+
 def notify(title, message, url, priority="default", tags="eyes"):
     """Return True se almeno un canale ha ricevuto, o se non ne e' configurato."""
     sent = []
@@ -138,8 +169,8 @@ def notify(title, message, url, priority="default", tags="eyes"):
         payload = urllib.parse.urlencode(
             {
                 "chat_id": chat,
-                "text": f"*{title}*\n{message}\n{url}",
-                "parse_mode": "Markdown",
+                "text": telegram_body(title, message, url, tags),
+                "parse_mode": "HTML",
                 "disable_web_page_preview": "true",
             }
         ).encode()

@@ -92,40 +92,35 @@ se smette di arrivare, qualcosa si e' rotto.
 
 ## Cloudflare: il secondo watcher
 
-> **Stato: il Worker funziona. Sul cron, da rimisurare.**
-> Il 16/09/2026 il cron risultava mai eseguito: zero invocazioni schedulate nei
-> log e contatore delle invocazioni fermo (41 -> 41 su 4 minuti con cron al
-> minuto, 42 -> 42 attraverso un tick con `*/5`). Provati sia l'aiuto grafico
-> "Every minute" sia l'espressione `*/5 * * * *`, eliminando e ricreando il
-> trigger: nessuna differenza.
+> **Stato: funziona tutto, cron compreso.**
+> Verificato il 17/09/2026 nella dashboard, sotto
+> **Worker → Observability → Events** con la finestra su un'ora: 12 esecuzioni,
+> 0 errori, barre equidistanti, e ogni riga ha come messaggio l'espressione
+> `*/5 * * * *`. E' cosi' che Cloudflare etichetta un'invocazione schedulata:
+> quelle righe **sono** i tick del cron. In pari data: 186 richieste dall'inizio
+> della giornata UTC, contro le ~187 che un tick ogni 5 minuti produce.
 >
-> **Quelle due misure pero' non dimostrano niente**, ed e' l'errore da non
-> ripetere:
+> **La diagnosi del 16/09 ("il cron non esegue") era sbagliata**, e vale la pena
+> ricordare perche', perche' e' l'errore che si rifa' volentieri: era fondata sul
+> contatore delle invocazioni e sui log realtime, guardati per pochi minuti.
+> Il contatore e' aggregato e arriva in ritardo, i log realtime mostrano solo
+> cio' che passa mentre li guardi, e il worker in stato CLOSED -> CLOSED non
+> stampa niente. Tre strumenti che, per motivi diversi, non potevano mostrare
+> quello che si cercava.
 >
-> - il contatore delle invocazioni della dashboard conta le **richieste HTTP**,
->   non i tick schedulati: resta fermo anche con il cron perfettamente attivo;
-> - i log persistenti dei Worker sono **disattivati di default**. "Zero righe
->   nei log" e' lo stato normale di un worker senza observability accesa, non la
->   prova di un'assenza di esecuzioni.
+> Il posto giusto e' **Observability → Events**. Se un domani ti serve
+> ricontrollare, guarda li' e basta.
 >
-> Servivano due strumenti diversi da quelli usati. Per questo il worker ora
-> timbra `_last_cron` su KV a ogni tick schedulato, prima di fare altro: e'
-> l'unica misura che distingue "non parte" da "parte e non lascia tracce".
-> Dopo il deploy, aspetta tre minuti e apri l'URL del worker: il campo
-> `ultimo_cron` risponde in modo definitivo.
->
-> Se `ultimo_cron` dice `MAI` anche dopo diversi minuti, allora il cron e'
-> davvero morto e il Worker si muove **solo** se qualcuno apre il suo URL:
-> non aggiunge nulla al watcher GitHub, che invece gira da solo. Resta li'
-> inerte e non costa niente.
+> Nota: il trigger attivo e' `*/5 * * * *`, cinque minuti, non un minuto.
 
 Far girare **anche** il Worker, in parallelo a GitHub Actions e sullo stesso
 topic ntfy, da':
 
-- controllo ogni **minuto** invece di 5-25, perche' il cron di Cloudflare e' puntuale
+- controllo **puntuale**: il cron di Cloudflare parte quando dice, mentre
+  GitHub arriva con 13-21 minuti di ritardo
 - due cloud indipendenti: se GitHub si ferma, Cloudflare continua, e viceversa
 - nessun limite di 60 giorni di inattivita'
-- costo zero (~1.440 richieste al giorno sulle 100.000 gratuite)
+- costo zero (288 richieste al giorno a `*/5`, sulle 100.000 gratuite)
 
 Quando il beta apre ricevi due notifiche invece di una. Per questo caso e' un
 vantaggio: una doppia costa due secondi di fastidio, una mancata costa un anno.
@@ -161,24 +156,25 @@ Nel Worker, **Settings → Bindings → Add**:
 
 **Settings → Triggers → Cron Triggers → Add**, espressione:
 
-    * * * * *
+    */5 * * * *
+
+Cinque minuti sono piu' che sufficienti: la finestra in cui WhatsApp riapre
+dura da decine di minuti a qualche ora. Se vuoi il minuto metti `* * * * *`;
+costa 1.440 invocazioni al giorno sulle 100.000 gratuite, quindi si puo' fare.
 
 ### 5. Prova subito
 
 Apri l'URL del worker (`https://testflight-watch.<tuo-sottodominio>.workers.dev`)
 in un browser: risponde con lo stato in JSON. Deve uscire una cosa cosi':
 
-    {
-      "ultimo_cron": { "quando": "2026-09-17T15:04:00.000Z", "secondi_fa": 37 },
-      "slot": [{"code":"krUFQpyJ","prev":"CLOSED","state":"CLOSED","detail":"This beta isn't accepting..."}]
-    }
+    [{"code":"krUFQpyJ","prev":"CLOSED","state":"CLOSED","detail":"This beta isn't accepting..."}]
 
-Se vedi `"state":"CLOSED"` il controllo funziona. Se vedi un errore su `STATE`,
-il binding KV del punto 3 non e' stato salvato.
+Se vedi `"state":"CLOSED"` funziona. Se vedi un errore su `STATE`, il binding
+KV del punto 3 non e' stato salvato.
 
-`ultimo_cron` e' la risposta alla domanda "il cron gira?". Aspetta tre minuti
-dopo il deploy, poi ricarica: se `secondi_fa` e' sotto il centinaio e cala a
-ogni ricarica, il cron gira. Se resta `MAI`, no.
+Per verificare che sia il **cron** a muoverlo, e non la tua visita, vai in
+**Observability → Events** e metti la finestra su un'ora: devi vedere una riga
+per tick, con l'espressione cron come messaggio.
 
 ### Importante: la quota di ntfy.sh e' per indirizzo IP
 

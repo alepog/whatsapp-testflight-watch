@@ -13,7 +13,7 @@
  *   - un secret               NTFY_TOPIC
  *   - opzionale               NTFY_TOKEN  (token di un account ntfy.sh)
  *   - opzionale               TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
- *   - un cron trigger         * * * * *
+ *   - un cron trigger         */5 * * * *
  */
 
 const UA =
@@ -91,7 +91,34 @@ async function notifyNtfy(env, title, message, url, priority, tags) {
   }
 }
 
-async function notifyTelegram(env, title, message, url) {
+// Le stesse tag che ntfy usa per le sue icone, riusate come emoji su Telegram.
+const TG_EMOJI = {
+  rotating_light: "\u{1F6A8}",
+  warning: "\u26A0\uFE0F",
+  lock: "\u{1F512}",
+  ghost: "\u{1F47B}",
+  heartbeat: "\u{1F493}",
+  eyes: "\u{1F440}",
+};
+
+const esc = (s) =>
+  String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+// HTML e non Markdown: il testo di stato lo scrive Apple, e un underscore o un
+// asterisco spaiato manderebbe in errore il parsing dell'intero messaggio.
+function telegramBody(title, message, url, tags) {
+  const emoji = TG_EMOJI[tags] || TG_EMOJI.eyes;
+  const nl = message.indexOf("\n");
+  const testa = nl === -1 ? message : message.slice(0, nl);
+  const coda = nl === -1 ? "" : message.slice(nl + 1).trim();
+  const righe = [`${emoji} <b>${esc(title)}</b>`, "", esc(testa)];
+  // La coda e' il testo grezzo di Apple: in corsivo si legge come citazione.
+  if (coda) righe.push(`<i>${esc(coda)}</i>`);
+  righe.push("", `<a href="${esc(url)}">Apri in TestFlight</a>`);
+  return righe.join("\n");
+}
+
+async function notifyTelegram(env, title, message, url, tags) {
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return null;
   try {
     const r = await fetch(
@@ -101,7 +128,8 @@ async function notifyTelegram(env, title, message, url) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           chat_id: env.TELEGRAM_CHAT_ID,
-          text: `${title}\n${message}\n${url}`,
+          text: telegramBody(title, message, url, tags),
+          parse_mode: "HTML",
           disable_web_page_preview: true,
         }),
       }
@@ -123,7 +151,7 @@ async function notify(env, title, message, url, priority, tags) {
   const esiti = (
     await Promise.all([
       notifyNtfy(env, title, message, url, priority, tags),
-      notifyTelegram(env, title, message, url),
+      notifyTelegram(env, title, message, url, tags),
     ])
   ).filter((e) => e !== null);
 
@@ -218,33 +246,12 @@ async function checkAll(env) {
 
 export default {
   async scheduled(event, env, ctx) {
-    // Sonda: timbra SEMPRE, prima di qualsiasi altra cosa. Serve a distinguere
-    // "il cron non parte" da "il cron parte ma non lascia tracce visibili".
-    // I contatori della dashboard misurano le richieste HTTP, non le
-    // invocazioni schedulate, quindi restano fermi anche a cron funzionante:
-    // non sono una prova. Questo timbro si'. Vedi `ultimo_cron` nella risposta
-    // HTTP del worker.
-    ctx.waitUntil(
-      (async () => {
-        await env.STATE.put("_last_cron", String(Date.now()));
-        await checkAll(env);
-      })()
-    );
+    ctx.waitUntil(checkAll(env));
   },
   // Apri l'URL del worker nel browser per vedere lo stato e provare il deploy.
   async fetch(request, env) {
-    const lastCron = Number((await env.STATE.get("_last_cron")) || 0);
     const results = await checkAll(env);
-    const body = {
-      ultimo_cron: lastCron
-        ? {
-            quando: new Date(lastCron).toISOString(),
-            secondi_fa: Math.round((Date.now() - lastCron) / 1000),
-          }
-        : "MAI - nessuna invocazione schedulata da quando questa sonda e' attiva",
-      slot: results,
-    };
-    return new Response(JSON.stringify(body, null, 2), {
+    return new Response(JSON.stringify(results, null, 2), {
       headers: { "content-type": "application/json" },
     });
   },
