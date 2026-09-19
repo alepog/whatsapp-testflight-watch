@@ -1,9 +1,9 @@
 {
   "YcmGWyxV": {
-    "checked_at": 1789715876,
-    "detail": "This beta isn't accepting any new testers right now.",
+    "checked_at": 1789779259,
+    "detail": "En este momento no se aceptan testers nuevos para esta versi\u00f3n beta.",
     "error_streak": 0,
-    "state": "CLOSED"
+    "state": "UNKNOWN"
   },
   "_meta": {
     "last_heartbeat": 1789715876
