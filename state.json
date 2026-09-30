@@ -1,9 +1,9 @@
 {
   "YcmGWyxV": {
-    "checked_at": 1790751805,
-    "detail": "This beta isn't accepting any new testers right now.",
+    "checked_at": 1790797136,
+    "detail": "testflight.group.public.link.disabled",
     "error_streak": 0,
-    "state": "CLOSED"
+    "state": "UNKNOWN"
   },
   "_meta": {
     "last_heartbeat": 1790751805
